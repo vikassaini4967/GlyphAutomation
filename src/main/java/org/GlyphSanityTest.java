@@ -5,9 +5,9 @@ import org.apache.commons.io.FileUtils;
 import org.openqa.selenium.*;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.interactions.Actions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
-import org.openqa.selenium.interactions.Actions;
 
 import java.io.File;
 import java.io.IOException;
@@ -36,7 +36,6 @@ public class GlyphSanityTest {
         setupDriver();
 
         try {
-            // --- STEP 1: GLYPH SIGNUP ---
             log("STEP 1: Navigating to Glyph URL: " + BASE_URL);
             driver.get(BASE_URL);
             switchToGlyphIframe();
@@ -62,17 +61,14 @@ public class GlyphSanityTest {
             log("⏳ WAITING 15 SECONDS for email delivery...");
             Thread.sleep(15000);
 
-            // --- STEP 2: FETCH OTP ---
             log("STEP 2: Checking Yopmail Inbox for OTP...");
             String otp = fetchOtpDirectUrl(emailPrefix);
 
-            // --- STEP 3: SUBMIT OTP ---
             log("STEP 3: Submitting OTP to Glyph...");
             driver.switchTo().window(driver.getWindowHandles().toArray()[0].toString());
             switchToGlyphIframe();
             enterPinDigits("email-otp-", otp);
 
-            // --- STEP 4: UNIFIED ID ---
             log("STEP 4: Creating Unified ID...");
             String unifiedId = ("id" + (System.currentTimeMillis() % 100000)).toLowerCase();
             safeType(By.id("unified-id-input"), unifiedId);
@@ -81,7 +77,6 @@ public class GlyphSanityTest {
             ((JavascriptExecutor) driver).executeScript("arguments[0].click();", nextBtn);
             log("✅ Unified ID Submitted: " + unifiedId);
 
-            // --- STEP 5: PIN SETUP ---
             log("STEP 5: Setting up Security PIN...");
             wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//input[contains(@id,'pin-input-0')]")));
             enterPinDigits("pin-input-", DEFAULT_PIN);
@@ -92,9 +87,7 @@ public class GlyphSanityTest {
 
             driver.findElement(By.xpath("//button[contains(text(),'Create') or contains(text(),'Next')]")).click();
 
-            // --- NEW LOG ADDED HERE ---
             log("⏳ Registering to Unified ID...");
-
             wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//h1[contains(text(),'successfully')]")));
             log("🎉 SUCCESS: Account Creation Verified!");
 
@@ -111,8 +104,6 @@ public class GlyphSanityTest {
     private static void setupDriver() {
         WebDriverManager.chromedriver().setup();
         ChromeOptions options = new ChromeOptions();
-
-        // HEADLESS MODE ACTIVE FOR GITHUB ACTIONS
         options.addArguments("--headless=new");
         options.addArguments("--window-size=1920,1080");
         options.addArguments("--disable-gpu");
@@ -163,7 +154,7 @@ public class GlyphSanityTest {
 
         if (otp.isEmpty()) {
             takeScreenshot("OTP_NOT_FOUND");
-            throw new RuntimeException("OTP retrieval failed - Inbox was empty or blocked.");
+            throw new RuntimeException("OTP retrieval failed.");
         }
 
         driver.close();
@@ -174,7 +165,6 @@ public class GlyphSanityTest {
         try {
             File src = ((TakesScreenshot) driver).getScreenshotAs(OutputType.FILE);
             FileUtils.copyFile(src, new File("screenshots/" + prefix + "_" + System.currentTimeMillis() + ".png"));
-            log("📸 Screenshot saved: screenshots/" + prefix + ".png");
         } catch (IOException ignored) {}
     }
 
