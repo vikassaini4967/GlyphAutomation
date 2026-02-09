@@ -2,9 +2,9 @@ name: Glyph Daily Sanity Check
 
 on:
   schedule:
-    # 4:30 AM UTC = 10:00 AM IST
+    # 4:30 AM UTC is exactly 10:00 AM IST
     - cron: '30 4 * * *'
-  workflow_dispatch: # Allows manual run button
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
 
 jobs:
   build:
@@ -22,5 +22,12 @@ jobs:
           cache: maven
 
       - name: Run Selenium Test
-        # Ensure org.GlyphSanityTest matches your project's package structure
+        # Ensure the mainClass matches your project structure (org.GlyphSanityTest)
         run: mvn exec:java -Dexec.mainClass="org.GlyphSanityTest"
+
+      - name: Upload Failure Screenshots
+        if: failure() # This only runs if the 'Run Selenium Test' step fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screenshots
+          path: screenshots/
