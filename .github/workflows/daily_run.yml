@@ -22,18 +22,18 @@ jobs:
           cache: maven
 
       - name: Run Selenium Test
-        # This matches the package in your Java file (org) and the pom.xml mainClass
+        # This triggers mainClass in pom.xml (org.GlyphSanityTest)
         run: mvn exec:java
 
       - name: Upload Failure Screenshots
-        if: failure() # Only runs if the test fails
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: failure-screenshots
           path: screenshots/
       
       - name: Upload Success Screenshots
-        if: success() # Runs if the test passes (to see the "Account Created" proof)
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: success-screenshots
