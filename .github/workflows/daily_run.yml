@@ -2,39 +2,25 @@ name: Glyph Daily Sanity Check
 
 on:
   schedule:
-    # 04:30 UTC is exactly 10:00 AM IST
-    - cron: '30 4 * * *'
-  workflow_dispatch: # Allows manual run button
+    - cron: '30 4 * * *' # 10:00 AM IST
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: maven
-
       - name: Run Selenium Test
-        # This triggers mainClass in pom.xml (org.GlyphSanityTest)
         run: mvn exec:java
-
-      - name: Upload Failure Screenshots
-        if: failure()
+      - name: Upload Screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: failure-screenshots
-          path: screenshots/
-      
-      - name: Upload Success Screenshots
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: success-screenshots
+          name: sanity-screenshots
           path: screenshots/
