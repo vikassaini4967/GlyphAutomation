@@ -34,7 +34,7 @@ jobs:
         run: mkdir -p screenshots
 
       - name: Run Selenium Test
-        run: mvn -B -e exec:java
+        run: mvn -B -e clean compile exec:java
 
       - name: Upload Screenshots
         if: always()
