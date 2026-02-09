@@ -27,11 +27,14 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Set up Chrome browser
+        uses: browser-actions/setup-chrome@v1
+
       - name: Create screenshots directory
         run: mkdir -p screenshots
 
       - name: Run Selenium Test
-        run: mvn exec:java
+        run: mvn -B -e exec:java
 
       - name: Upload Screenshots
         if: always()
