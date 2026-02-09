@@ -117,8 +117,13 @@ public class GlyphSanityTest {
         ChromeOptions options = new ChromeOptions();
         options.addArguments("--start-maximized");
         options.addArguments("--disable-blink-features=AutomationControlled");
-        options.setExperimentalOption("excludeSwitches", Collections.singletonList("enable-automation"));
 
+
+        //git  GITHUB ACTIONS
+        options.addArguments("--headless=new");
+        options.addArguments("--disable-gpu");
+        options.addArguments("--no-sandbox");
+        options.setExperimentalOption("excludeSwitches", Collections.singletonList("enable-automation"));
         driver = new ChromeDriver(options);
 
         // CDP Stealth Command to mask Selenium
