@@ -5,7 +5,6 @@ import org.apache.commons.io.FileUtils;
 import org.openqa.selenium.*;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
-import org.openqa.selenium.interactions.Actions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
@@ -91,7 +90,10 @@ public class GlyphSanityTest {
                 enterPinDigits("confirm-pin-input-", DEFAULT_PIN);
             }
 
-            driver.findElement(By.xpath("//button[contains(text(),'Create') or contains(text(),'Next')]")).click();
+            // Handle different button text variations
+            WebElement createBtn = wait.until(ExpectedConditions.elementToBeClickable(
+                    By.xpath("//button[contains(text(),'Create') or contains(text(),'Next') or contains(text(),'Submit')]")));
+            ((JavascriptExecutor) driver).executeScript("arguments[0].click();", createBtn);
 
             log("⏳ Registering to Unified ID...");
             wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//h1[contains(text(),'successfully')]")));
@@ -101,6 +103,8 @@ public class GlyphSanityTest {
             log("❌ FAILED: " + e.getMessage());
             takeScreenshot("FAILURE_DEBUG");
             e.printStackTrace();
+            // Fail the CI build if exception occurs
+            if (isCiEnvironment()) System.exit(1); 
         } finally {
             if (driver != null) driver.quit();
             log("Session Ended.");
@@ -108,19 +112,24 @@ public class GlyphSanityTest {
     }
 
     private static boolean isCiEnvironment() {
-        // GitHub Actions exposes this env var; can extend for other CIs later
         return System.getenv("GITHUB_ACTIONS") != null;
     }
 
     private static void setupDriver() {
         WebDriverManager.chromedriver().setup();
         ChromeOptions options = new ChromeOptions();
+        
+        // CI-Specific Headless Settings
         options.addArguments("--headless=new");
         options.addArguments("--window-size=1920,1080");
         options.addArguments("--disable-gpu");
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
+        
+        // ANTI-BOT DETECTION FLAGS (Critical for Yopmail)
+        options.addArguments("--disable-blink-features=AutomationControlled");
         options.addArguments("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+        
         options.setExperimentalOption("excludeSwitches", Collections.singletonList("enable-automation"));
 
         driver = new ChromeDriver(options);
@@ -143,22 +152,47 @@ public class GlyphSanityTest {
         log("🔗 Navigating to Inbox: " + directInboxUrl);
         driver.get(directInboxUrl);
 
+        // FIX: Handle Cookie Consent Popup (Common in CI regions)
+        try {
+            Thread.sleep(2000);
+            WebElement consent = driver.findElement(By.id("accept")); // Common ID for cookie accept
+            consent.click();
+            log("🍪 Cookie consent accepted.");
+        } catch (Exception e) {
+            // Ignore if not found
+        }
+
         String otp = "";
-        int maxAttempts = 10; // hard cap on attempts for CI stability
+        int maxAttempts = 15; // Increased attempts
+        
         for (int i = 0; i < maxAttempts; i++) {
             log("Polling attempt " + (i + 1) + "/" + maxAttempts + "...");
             try {
                 driver.switchTo().defaultContent();
-                // If inbox frame exists, click the latest email first
-                if (driver.findElements(By.id("ifinbox")).size() > 0) {
-                    driver.switchTo().frame("ifinbox");
-                    java.util.List<WebElement> mails = driver.findElements(By.cssSelector(".m, .lm"));
-                    if (!mails.isEmpty()) {
-                        mails.get(0).click();
-                    }
-                    driver.switchTo().defaultContent();
+                
+                // FIX: Click the INTERNAL refresh button instead of reloading page
+                try {
+                    WebElement refreshBtn = driver.findElement(By.id("refresh"));
+                    refreshBtn.click();
+                } catch (Exception e) {
+                    driver.navigate().refresh(); // Fallback
                 }
 
+                // Wait for inbox iframe to load
+                try {
+                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(By.id("ifinbox")));
+                    java.util.List<WebElement> mails = driver.findElements(By.cssSelector(".m, .lm"));
+                    if (!mails.isEmpty()) {
+                        mails.get(0).click(); // Click the newest mail
+                    }
+                } catch (Exception e) {
+                    log("⚠️ Inbox frame not found yet...");
+                }
+
+                driver.switchTo().defaultContent();
+                Thread.sleep(1000);
+
+                // Check email body
                 if (driver.findElements(By.id("ifmail")).size() > 0) {
                     driver.switchTo().frame("ifmail");
                     String body = driver.findElement(By.tagName("body")).getText();
@@ -170,24 +204,22 @@ public class GlyphSanityTest {
                     }
                 }
             } catch (Exception ignored) {
+                log("Debug: " + ignored.getMessage());
             }
-            driver.navigate().refresh();
+            
             try {
-                Thread.sleep(6000); // total max wait ~60 seconds
-            } catch (InterruptedException ignored) {
-            }
+                Thread.sleep(4000); // 4 sec wait between polls
+            } catch (InterruptedException ignored) {}
         }
 
         if (otp.isEmpty()) {
             takeScreenshot("OTP_NOT_FOUND");
 
-            // In CI we treat missing OTP as a soft failure: log and return null
             if (isCiEnvironment()) {
                 log("⚠️ OTP retrieval failed after " + maxAttempts + " attempts in CI. Treating as soft failure.");
                 driver.close();
                 return null;
             }
-
             throw new RuntimeException("OTP retrieval failed after " + maxAttempts + " attempts.");
         }
 
