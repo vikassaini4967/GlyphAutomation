@@ -8,8 +8,12 @@ import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.util.Collections;
@@ -27,11 +31,14 @@ public class GlyphSanityTest {
     private static final String DEFAULT_PIN = "888881";
     private static final String IFRAME_ID = "safle-react-widget-iframe";
 
+    // 1secmail Configuration
+    private static final String MAIL_DOMAIN = "1secmail.com"; 
+
     private static WebDriver driver;
     private static WebDriverWait wait;
 
     public static void main(String[] args) {
-        log("🚀 STARTING FINAL AUTOMATION SUITE");
+        log("🚀 STARTING FINAL API-BASED AUTOMATION SUITE");
         setupDriver();
 
         try {
@@ -39,8 +46,9 @@ public class GlyphSanityTest {
             driver.get(BASE_URL);
             switchToGlyphIframe();
 
-            String emailPrefix = "glyph_qa_" + System.currentTimeMillis();
-            String fullEmail = emailPrefix + "@yopmail.com";
+            // GENERATE EMAIL (API BASED)
+            String mailUser = "glyph_ci_" + System.currentTimeMillis();
+            String fullEmail = mailUser + "@" + MAIL_DOMAIN;
             log("✅ Generated Target Email: " + fullEmail);
 
             log("✍️ Action: Entering Email...");
@@ -57,21 +65,21 @@ public class GlyphSanityTest {
             ((JavascriptExecutor) driver).executeScript("arguments[0].click();", signUpBtn);
             log("✅ Sign Up Clicked Successfully.");
 
-            log("⏳ WAITING 15 SECONDS for email delivery...");
-            Thread.sleep(15000);
+            log("⏳ WAITING for Email Delivery (via API)...");
+            
+            // FETCH OTP VIA API (No Browser Interaction)
+            String otp = fetchOtpFromApi(mailUser, MAIL_DOMAIN);
 
-            log("STEP 2: Checking Yopmail Inbox for OTP...");
-            String otp = fetchOtpDirectUrl(emailPrefix);
-
-            // In CI, if OTP could not be retrieved, skip the rest but keep build green.
-            if (otp == null && isCiEnvironment()) {
-                log("⚠️ OTP not received in CI after max attempts. Skipping OTP submission and post-signup steps.");
-                return;
+            if (otp == null) {
+                takeScreenshot("OTP_FAILURE");
+                throw new RuntimeException("Failed to retrieve OTP from API after max attempts.");
             }
 
             log("STEP 3: Submitting OTP to Glyph...");
-            driver.switchTo().window(driver.getWindowHandles().toArray()[0].toString());
+            // Ensure we are focused on the correct window/frame
+            driver.switchTo().defaultContent();
             switchToGlyphIframe();
+            
             enterPinDigits("email-otp-", otp);
 
             log("STEP 4: Creating Unified ID...");
@@ -86,11 +94,12 @@ public class GlyphSanityTest {
             wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//input[contains(@id,'pin-input-0')]")));
             enterPinDigits("pin-input-", DEFAULT_PIN);
 
+            // Handle optional confirm pin if it appears
             if (!driver.findElements(By.id("confirm-pin-input-0")).isEmpty()) {
                 enterPinDigits("confirm-pin-input-", DEFAULT_PIN);
             }
 
-            // Handle different button text variations
+            // Click Create/Next/Submit (handles variations)
             WebElement createBtn = wait.until(ExpectedConditions.elementToBeClickable(
                     By.xpath("//button[contains(text(),'Create') or contains(text(),'Next') or contains(text(),'Submit')]")));
             ((JavascriptExecutor) driver).executeScript("arguments[0].click();", createBtn);
@@ -103,13 +112,83 @@ public class GlyphSanityTest {
             log("❌ FAILED: " + e.getMessage());
             takeScreenshot("FAILURE_DEBUG");
             e.printStackTrace();
-            // Fail the CI build if exception occurs
             if (isCiEnvironment()) System.exit(1); 
         } finally {
             if (driver != null) driver.quit();
             log("Session Ended.");
         }
     }
+
+    // ==========================================
+    //  1SECMAIL API HELPER METHODS
+    // ==========================================
+    
+    private static String fetchOtpFromApi(String user, String domain) {
+        int attempts = 0;
+        int maxAttempts = 20; // 20 * 3s = 60 seconds max wait
+        
+        while (attempts < maxAttempts) {
+            attempts++;
+            log("API Polling Attempt " + attempts + "/" + maxAttempts + "...");
+            
+            try {
+                // 1. Check Inbox
+                String inboxUrl = "https://www.1secmail.com/api/v1/?action=getMessages&login=" + user + "&domain=" + domain;
+                String inboxResponse = sendGetRequest(inboxUrl);
+                
+                // Response is a JSON array: [{"id": 12345, "from": "...", "subject": "..."}]
+                // We use simple regex to find the ID to avoid external JSON dependencies
+                Pattern idPattern = Pattern.compile("\"id\":\\s*(\\d+)");
+                Matcher idMatcher = idPattern.matcher(inboxResponse);
+
+                if (idMatcher.find()) {
+                    String messageId = idMatcher.group(1);
+                    log("📩 Email Received! ID: " + messageId);
+
+                    // 2. Fetch Message Body
+                    String msgUrl = "https://www.1secmail.com/api/v1/?action=readMessage&login=" + user + "&domain=" + domain + "&id=" + messageId;
+                    String msgResponse = sendGetRequest(msgUrl);
+
+                    // 3. Extract OTP (Assuming 6 digits)
+                    Matcher otpMatcher = Pattern.compile("\\b\\d{6}\\b").matcher(msgResponse);
+                    if (otpMatcher.find()) {
+                        String otp = otpMatcher.group();
+                        log("🎯 OTP CAPTURED VIA API: " + otp);
+                        return otp;
+                    }
+                }
+                
+                Thread.sleep(3000); // Wait 3 seconds before next poll
+                
+            } catch (Exception e) {
+                log("⚠️ API Error: " + e.getMessage());
+                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+            }
+        }
+        return null;
+    }
+
+    private static String sendGetRequest(String urlToRead) throws Exception {
+        StringBuilder result = new StringBuilder();
+        URL url = new URL(urlToRead);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        
+        // Basic User-Agent to avoid being flagged
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
+        try (BufferedReader rd = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+            String line;
+            while ((line = rd.readLine()) != null) {
+                result.append(line);
+            }
+        }
+        return result.toString();
+    }
+
+    // ==========================================
+    //  SELENIUM & UTILITY METHODS
+    // ==========================================
 
     private static boolean isCiEnvironment() {
         return System.getenv("GITHUB_ACTIONS") != null;
@@ -119,17 +198,15 @@ public class GlyphSanityTest {
         WebDriverManager.chromedriver().setup();
         ChromeOptions options = new ChromeOptions();
         
-        // CI-Specific Headless Settings
         options.addArguments("--headless=new");
         options.addArguments("--window-size=1920,1080");
         options.addArguments("--disable-gpu");
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
         
-        // ANTI-BOT DETECTION FLAGS (Critical for Yopmail)
+        // Stealth flags to prevent app from blocking the Sign Up click
         options.addArguments("--disable-blink-features=AutomationControlled");
         options.addArguments("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
-        
         options.setExperimentalOption("excludeSwitches", Collections.singletonList("enable-automation"));
 
         driver = new ChromeDriver(options);
@@ -138,93 +215,6 @@ public class GlyphSanityTest {
         Map<String, Object> params = new HashMap<>();
         params.put("source", "Object.defineProperty(navigator, 'webdriver', { get: () => undefined })");
         ((ChromeDriver) driver).executeCdpCommand("Page.addScriptToEvaluateOnNewDocument", params);
-    }
-
-    private static String fetchOtpDirectUrl(String emailPrefix) {
-        String originalHandle = driver.getWindowHandle();
-        ((JavascriptExecutor) driver).executeScript("window.open()");
-
-        for (String handle : driver.getWindowHandles()) {
-            if (!handle.equals(originalHandle)) driver.switchTo().window(handle);
-        }
-
-        String directInboxUrl = "https://yopmail.com/en/?login=" + emailPrefix;
-        log("🔗 Navigating to Inbox: " + directInboxUrl);
-        driver.get(directInboxUrl);
-
-        // FIX: Handle Cookie Consent Popup (Common in CI regions)
-        try {
-            Thread.sleep(2000);
-            WebElement consent = driver.findElement(By.id("accept")); // Common ID for cookie accept
-            consent.click();
-            log("🍪 Cookie consent accepted.");
-        } catch (Exception e) {
-            // Ignore if not found
-        }
-
-        String otp = "";
-        int maxAttempts = 15; // Increased attempts
-        
-        for (int i = 0; i < maxAttempts; i++) {
-            log("Polling attempt " + (i + 1) + "/" + maxAttempts + "...");
-            try {
-                driver.switchTo().defaultContent();
-                
-                // FIX: Click the INTERNAL refresh button instead of reloading page
-                try {
-                    WebElement refreshBtn = driver.findElement(By.id("refresh"));
-                    refreshBtn.click();
-                } catch (Exception e) {
-                    driver.navigate().refresh(); // Fallback
-                }
-
-                // Wait for inbox iframe to load
-                try {
-                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(By.id("ifinbox")));
-                    java.util.List<WebElement> mails = driver.findElements(By.cssSelector(".m, .lm"));
-                    if (!mails.isEmpty()) {
-                        mails.get(0).click(); // Click the newest mail
-                    }
-                } catch (Exception e) {
-                    log("⚠️ Inbox frame not found yet...");
-                }
-
-                driver.switchTo().defaultContent();
-                Thread.sleep(1000);
-
-                // Check email body
-                if (driver.findElements(By.id("ifmail")).size() > 0) {
-                    driver.switchTo().frame("ifmail");
-                    String body = driver.findElement(By.tagName("body")).getText();
-                    Matcher m = Pattern.compile("\\b\\d{6}\\b").matcher(body);
-                    if (m.find()) {
-                        otp = m.group();
-                        log("🎯 OTP CAPTURED: " + otp);
-                        break;
-                    }
-                }
-            } catch (Exception ignored) {
-                log("Debug: " + ignored.getMessage());
-            }
-            
-            try {
-                Thread.sleep(4000); // 4 sec wait between polls
-            } catch (InterruptedException ignored) {}
-        }
-
-        if (otp.isEmpty()) {
-            takeScreenshot("OTP_NOT_FOUND");
-
-            if (isCiEnvironment()) {
-                log("⚠️ OTP retrieval failed after " + maxAttempts + " attempts in CI. Treating as soft failure.");
-                driver.close();
-                return null;
-            }
-            throw new RuntimeException("OTP retrieval failed after " + maxAttempts + " attempts.");
-        }
-
-        driver.close();
-        return otp;
     }
 
     private static void takeScreenshot(String prefix) {
