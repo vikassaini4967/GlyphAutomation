@@ -133,10 +133,21 @@ public class GlyphSanityTest {
         driver.get(directInboxUrl);
 
         String otp = "";
-        for (int i = 0; i < 20; i++) {
-            log("Polling attempt " + (i + 1) + "/20...");
+        int maxAttempts = 30; // wait up to ~3 minutes (30 * 6s)
+        for (int i = 0; i < maxAttempts; i++) {
+            log("Polling attempt " + (i + 1) + "/" + maxAttempts + "...");
             try {
                 driver.switchTo().defaultContent();
+                // If inbox frame exists, click the latest email first
+                if (driver.findElements(By.id("ifinbox")).size() > 0) {
+                    driver.switchTo().frame("ifinbox");
+                    java.util.List<WebElement> mails = driver.findElements(By.cssSelector(".m, .lm"));
+                    if (!mails.isEmpty()) {
+                        mails.get(0).click();
+                    }
+                    driver.switchTo().defaultContent();
+                }
+
                 if (driver.findElements(By.id("ifmail")).size() > 0) {
                     driver.switchTo().frame("ifmail");
                     String body = driver.findElement(By.tagName("body")).getText();
@@ -147,9 +158,13 @@ public class GlyphSanityTest {
                         break;
                     }
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
             driver.navigate().refresh();
-            try { Thread.sleep(4000); } catch (InterruptedException ignored) {}
+            try {
+                Thread.sleep(6000);
+            } catch (InterruptedException ignored) {
+            }
         }
 
         if (otp.isEmpty()) {
