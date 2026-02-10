@@ -133,7 +133,7 @@ public class GlyphSanityTest {
         driver.get(directInboxUrl);
 
         String otp = "";
-        int maxAttempts = 30; // wait up to ~3 minutes (30 * 6s)
+        int maxAttempts = 10; // hard cap on attempts for CI stability
         for (int i = 0; i < maxAttempts; i++) {
             log("Polling attempt " + (i + 1) + "/" + maxAttempts + "...");
             try {
@@ -162,14 +162,14 @@ public class GlyphSanityTest {
             }
             driver.navigate().refresh();
             try {
-                Thread.sleep(6000);
+                Thread.sleep(6000); // total max wait ~60 seconds
             } catch (InterruptedException ignored) {
             }
         }
 
         if (otp.isEmpty()) {
             takeScreenshot("OTP_NOT_FOUND");
-            throw new RuntimeException("OTP retrieval failed.");
+            throw new RuntimeException("OTP retrieval failed after " + maxAttempts + " attempts.");
         }
 
         driver.close();
