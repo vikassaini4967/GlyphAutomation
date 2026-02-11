@@ -5,6 +5,7 @@ import org.apache.commons.io.FileUtils;
 import org.openqa.selenium.*;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.interactions.Actions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
@@ -31,7 +32,7 @@ public class GlyphSanityTest {
     private static WebDriverWait wait;
 
     public static void main(String[] args) {
-        log("🚀 STARTING GLYPH AUTOMATION SUITE");
+        log("🚀 STARTING FINAL AUTOMATION SUITE");
         setupDriver();
 
         try {
@@ -61,7 +62,7 @@ public class GlyphSanityTest {
             Thread.sleep(15000);
 
             log("STEP 2: Checking Yopmail Inbox for OTP...");
-            String otp = fetchOtpFromYopmail(emailPrefix);
+            String otp = fetchOtpDirectUrl(emailPrefix);
 
             // In CI, if OTP could not be retrieved, skip the rest but keep build green.
             if (otp == null && isCiEnvironment()) {
@@ -70,7 +71,7 @@ public class GlyphSanityTest {
             }
 
             log("STEP 3: Submitting OTP to Glyph...");
-            driver.switchTo().window(driver.getWindowHandles().iterator().next());
+            driver.switchTo().window(driver.getWindowHandles().toArray()[0].toString());
             switchToGlyphIframe();
             enterPinDigits("email-otp-", otp);
 
@@ -90,7 +91,7 @@ public class GlyphSanityTest {
                 enterPinDigits("confirm-pin-input-", DEFAULT_PIN);
             }
 
-            driver.findElement(By.xpath("//button[contains(text(),'Create') or contains(text(),'Next') or contains(text(),'Submit')]")).click();
+            driver.findElement(By.xpath("//button[contains(text(),'Create') or contains(text(),'Next')]")).click();
 
             log("⏳ Registering to Unified ID...");
             wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//h1[contains(text(),'successfully')]")));
@@ -107,6 +108,7 @@ public class GlyphSanityTest {
     }
 
     private static boolean isCiEnvironment() {
+        // GitHub Actions exposes this env var; can extend for other CIs later
         return System.getenv("GITHUB_ACTIONS") != null;
     }
 
@@ -129,15 +131,12 @@ public class GlyphSanityTest {
         ((ChromeDriver) driver).executeCdpCommand("Page.addScriptToEvaluateOnNewDocument", params);
     }
 
-    private static String fetchOtpFromYopmail(String emailPrefix) {
+    private static String fetchOtpDirectUrl(String emailPrefix) {
         String originalHandle = driver.getWindowHandle();
         ((JavascriptExecutor) driver).executeScript("window.open()");
 
         for (String handle : driver.getWindowHandles()) {
-            if (!handle.equals(originalHandle)) {
-                driver.switchTo().window(handle);
-                break;
-            }
+            if (!handle.equals(originalHandle)) driver.switchTo().window(handle);
         }
 
         String directInboxUrl = "https://yopmail.com/en/?login=" + emailPrefix;
@@ -145,12 +144,11 @@ public class GlyphSanityTest {
         driver.get(directInboxUrl);
 
         String otp = "";
-        int maxAttempts = 5; // hard cap for CI stability
+        int maxAttempts = 10; // hard cap on attempts for CI stability
         for (int i = 0; i < maxAttempts; i++) {
             log("Polling attempt " + (i + 1) + "/" + maxAttempts + "...");
             try {
                 driver.switchTo().defaultContent();
-
                 // If inbox frame exists, click the latest email first
                 if (driver.findElements(By.id("ifinbox")).size() > 0) {
                     driver.switchTo().frame("ifinbox");
@@ -173,7 +171,6 @@ public class GlyphSanityTest {
                 }
             } catch (Exception ignored) {
             }
-
             driver.navigate().refresh();
             try {
                 Thread.sleep(6000); // total max wait ~60 seconds
@@ -184,13 +181,13 @@ public class GlyphSanityTest {
         if (otp.isEmpty()) {
             takeScreenshot("OTP_NOT_FOUND");
 
+            // In CI we treat missing OTP as a soft failure: log and return null
             if (isCiEnvironment()) {
                 log("⚠️ OTP retrieval failed after " + maxAttempts + " attempts in CI. Treating as soft failure.");
                 driver.close();
                 return null;
             }
 
-            driver.close();
             throw new RuntimeException("OTP retrieval failed after " + maxAttempts + " attempts.");
         }
 
@@ -202,8 +199,7 @@ public class GlyphSanityTest {
         try {
             File src = ((TakesScreenshot) driver).getScreenshotAs(OutputType.FILE);
             FileUtils.copyFile(src, new File("screenshots/" + prefix + "_" + System.currentTimeMillis() + ".png"));
-        } catch (IOException ignored) {
-        }
+        } catch (IOException ignored) {}
     }
 
     private static void enterPinDigits(String idPrefix, String value) {
@@ -228,3 +224,4 @@ public class GlyphSanityTest {
         System.out.println("[" + new SimpleDateFormat("HH:mm:ss").format(new Date()) + "][LOG] " + msg);
     }
 }
+
